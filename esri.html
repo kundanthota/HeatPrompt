@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Leaflet Two Maps: Plain vs. Binary Mask</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+  <style>
+    body { margin:0; padding:10px; font-family:sans-serif; }
+    #controls { margin-bottom:10px; }
+    .container { display:flex; gap:10px; }
+    .mapPanel {
+      width:600px; height:600px;
+      border:1px solid #ccc;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="controls">
+    <button id="saveLeft">Save Left Map</button>
+    <button id="saveRight">Save Right Mask</button>
+  </div>
+  <div class="container">
+    <div id="mapLeft"  class="mapPanel"></div>
+    <div id="mapRight" class="mapPanel"></div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+  ></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script>
+    // Function to parse URL parameters
+    function getUrlParameter(name) {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get(name);
+    }
+    
+    // Try to get polygon from URL parameter 'poly'
+    var rawCoords;
+    const polyParam = getUrlParameter('poly');
+    
+    if (polyParam) {
+      try {
+        // Try to parse the URL parameter as JSON
+        rawCoords = JSON.parse(decodeURIComponent(polyParam));
+        id = decodeURIComponent(getUrlParameter('id') || 'default');
+        console.log('Using polygon from URL parameter');
+      } catch (e) {
+        console.error('Error parsing polygon from URL:', e);
+        // Fallback to default polygon
+        rawCoords = [[
+          [8.27688,49.95955],[8.27648,49.95947],[8.27608,49.95940],
+          [8.27599,49.95942],[8.27596,49.95938],[8.27586,49.95937],
+          [8.27528,49.95928],[8.27523,49.95927],[8.27511,49.95920],
+          [8.27480,49.95901],[8.27468,49.95895],[8.27456,49.95888],
+          [8.27449,49.95896],[8.27446,49.95903],[8.27442,49.95908],
+          [8.27433,49.95917],[8.27425,49.95921],[8.27411,49.95925],
+          [8.27404,49.95932],[8.27416,49.95948],[8.27548,49.95968],
+          [8.27546,49.95974],[8.27601,49.95983],[8.27650,49.95998],
+          [8.27659,49.95971],[8.27667,49.95973],[8.27688,49.95972],
+          [8.27687,49.95961],[8.27688,49.95955]
+        ]];
+      }
+    } else {
+      // Default polygon if not provided in URL
+      rawCoords = [[
+        [8.27688,49.95955],[8.27648,49.95947],[8.27608,49.95940],
+        [8.27599,49.95942],[8.27596,49.95938],[8.27586,49.95937],
+        [8.27528,49.95928],[8.27523,49.95927],[8.27511,49.95920],
+        [8.27480,49.95901],[8.27468,49.95895],[8.27456,49.95888],
+        [8.27449,49.95896],[8.27446,49.95903],[8.27442,49.95908],
+        [8.27433,49.95917],[8.27425,49.95921],[8.27411,49.95925],
+        [8.27404,49.95932],[8.27416,49.95948],[8.27548,49.95968],
+        [8.27546,49.95974],[8.27601,49.95983],[8.27650,49.95998],
+        [8.27659,49.95971],[8.27667,49.95973],[8.27688,49.95972],
+        [8.27687,49.95961],[8.27688,49.95955]
+      ]];
+    }
+
+    // Flip to [lat, lon] if necessary
+    var multiPolyCoords = rawCoords.map(function(ring) {
+      return ring.map(function(pt) {
+        var lon=pt[0], lat=pt[1];
+        return [lat, lon];
+      });
+    });
+
+    // Compute bounding box
+    var lats = [], lons = [];
+    multiPolyCoords.forEach(ring => ring.forEach(pt => {
+      lats.push(pt[0]); lons.push(pt[1]);
+    }));
+    var minLat = Math.min(...lats), maxLat = Math.max(...lats),
+        minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    var bboxSw = [minLat, minLon], bboxNe = [maxLat, maxLon],
+        bbox   = [bboxSw, bboxNe];
+
+    // Helper to create a satellite map auto-zoomed to bbox
+    function createMap(id) {
+      var m = L.map(id, { zoomControl: false });
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 22,
+        maxNativeZoom: 19,
+        attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics'
+      }).addTo(m);
+      m.fitBounds(bbox);
+      return m;
+    }
+
+    // LEFT: plain satellite
+    var mapLeft = createMap('mapLeft');
+
+    // RIGHT: binary mask
+    var mapRight = createMap('mapRight');
+
+    // Build mask: outer rectangle minus AOI polygon
+    var outer = [
+      bboxSw,
+      [bboxSw[0], bboxNe[1]],
+      bboxNe,
+      [bboxNe[0], bboxSw[1]]
+    ];
+
+    // White fill inside AOI
+    L.polygon(multiPolyCoords, {
+      fillColor: '#fff',
+      fillOpacity: 1,
+      stroke: false
+    }).addTo(mapRight);
+
+    // Make the maps globally accessible
+    window.mapLeft = mapLeft;
+    window.mapRight = mapRight;
+    
+    // Create a helper function to take screenshot of a leaflet map
+    function leafletToCanvas(map) {
+      return new Promise(resolve => {
+        // Create a hidden canvas element
+        const canvas = document.createElement('canvas');
+        const container = map._container;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        
+        // Set canvas dimensions to match map
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Force map to redraw completely
+        map.invalidateSize();
+        
+        // Add slight delay to ensure proper rendering
+        setTimeout(() => {
+          // Use html2canvas with specific positioning parameters
+          html2canvas(container, {
+            useCORS: true,
+            allowTaint: true,
+            width: width,
+            height: height,
+            scrollX: 0,
+            scrollY: 0,
+            x: container.getBoundingClientRect().left,
+            y: container.getBoundingClientRect().top,
+            backgroundColor: null,
+            logging: false,
+            removeContainer: false
+          }).then(renderedCanvas => {
+            resolve(renderedCanvas);
+          });
+        }, 100);
+      });
+    }
+    
+    function leafletToCanvasLeft(map) {
+      return new Promise(resolve => {
+        // Create a hidden canvas element
+        const canvas = document.createElement('canvas');
+        const container = map._container;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        
+        // Set canvas dimensions to match map
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Find the attribution control
+        const attributionContainer = container.querySelector('.leaflet-control-attribution');
+        const attributionParent = attributionContainer ? attributionContainer.parentNode : null;
+        
+        // Store the original display state
+        let originalDisplayStyle = null;
+        
+        // Hide the attribution control if found
+        if (attributionContainer) {
+          originalDisplayStyle = attributionContainer.style.display;
+          attributionContainer.style.display = 'none';
+        }
+        
+        // Get all the map panes/layers
+        const mapPanes = container.querySelectorAll('.leaflet-pane');
+        const ctx = canvas.getContext('2d');
+        
+        // Use html2canvas to capture the map
+        html2canvas(container, {
+          useCORS: true,
+          allowTaint: true,
+          width: width,
+          height: height
+        }).then(renderedCanvas => {
+          // Restore the attribution control after screenshot
+          if (attributionContainer) {
+            attributionContainer.style.display = originalDisplayStyle;
+          }
+          
+          resolve(renderedCanvas);
+        });
+      });
+    }
+    // Add a loading indicator
+    function showLoading() {
+      const loader = document.createElement('div');
+      loader.id = 'screenshot-loader';
+      loader.style.position = 'fixed';
+      loader.style.top = '10px';
+      loader.style.left = '50%';
+      loader.style.transform = 'translateX(-50%)';
+      loader.style.backgroundColor = 'rgba(0,0,0,0.7)';
+      loader.style.color = 'white';
+      loader.style.padding = '5px 10px';
+      loader.style.borderRadius = '5px';
+      loader.style.zIndex = '1000';
+      loader.textContent = 'Taking screenshot...';
+      document.body.appendChild(loader);
+      return loader;
+    }
+    
+    function hideLoading(loader) {
+      if (loader && document.body.contains(loader)) {
+        document.body.removeChild(loader);
+      }
+    }
+    
+    // Screenshot handlers with separate handling for each map
+    document.getElementById('saveLeft').onclick = () => {
+      const loader = showLoading();
+      leafletToCanvasLeft(mapLeft).then(canvas => {
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `image_${id}.png`;
+        hideLoading(loader);
+        a.click();
+      });
+    };
+    
+    document.getElementById('saveRight').onclick = () => {
+      const loader = showLoading();
+      
+      // For the right map, we'll take a different approach:
+      // 1. Create a background canvas with black background
+      // 2. Add a white polygon for the AOI
+      
+      // Create a new canvas for the mask
+      const canvas = document.createElement('canvas');
+      const container = mapRight._container;
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      
+      // First draw the satellite base map
+      leafletToCanvas(mapRight).then(baseCanvas => {
+        // Now create a black background
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Get the polygon paths from the overlay pane
+        const polygonPaths = mapRight._container.querySelectorAll('.leaflet-overlay-pane path');
+        
+        // Find our white polygon and highlight it
+        if (polygonPaths.length > 0) {
+          // Draw the white polygon
+          ctx.fillStyle = '#ffffff';
+          
+          // Force white polygon to be visible
+          // Get coordinates of the polygon from the map
+          const points = [];
+          
+          // Convert the multiPolyCoords from lat/lng to pixel coordinates
+          multiPolyCoords[0].forEach(coord => {
+            const point = mapRight.latLngToContainerPoint(L.latLng(coord[0], coord[1]));
+            points.push([point.x, point.y]);
+          });
+          
+          // Draw the polygon
+          ctx.beginPath();
+          if (points.length > 0) {
+            ctx.moveTo(points[0][0], points[0][1]);
+            for (let i = 1; i < points.length; i++) {
+              ctx.lineTo(points[i][0], points[i][1]);
+            }
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        
+        // Create download link
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `mask_${id}.png`;
+        hideLoading(loader);
+        a.click();
+      });
+    };
+  </script>
+</body>
+</html>

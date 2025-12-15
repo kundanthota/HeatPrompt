@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Clip Satellite Image Inside Polygon</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.29/"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+    }
+    .container {
+      display: flex;
+      height: 100%;
+      width: 100%;
+    }
+    .left-panel {
+      flex: 1;
+      position: relative;
+      height: 100%;
+    }
+    .right-panel {
+      width: 350px;
+      height: 100%;
+      background-color: #f5f5f5;
+      padding: 20px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      border-left: 1px solid #ccc;
+    }
+    #viewDiv {
+      height: 100%;
+      width: 100%;
+    }
+    #outputCanvas {
+      display: none;
+    }
+    .result-item {
+      margin-bottom: 20px;
+    }
+    .result-heading {
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: #333;
+    }
+    .result-value {
+      padding: 10px;
+      background-color: #fff;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      word-wrap: break-word;
+    }
+    .result-image {
+      max-width: 100%;
+      margin-top: 10px;
+      border: 1px solid #ddd;
+    }
+    .loader {
+      border: 5px solid #f3f3f3;
+      border-top: 5px solid #3498db;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 2s linear infinite;
+      margin: 20px auto;
+      display: none;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="left-panel">
+      <div id="viewDiv"></div>
+      <canvas id="outputCanvas"></canvas>
+    </div>
+    
+    <div class="right-panel">
+      <h2>Analysis Results</h2>
+      <div class="loader" id="loading"></div>
+      
+      <div id="results">
+        <div class="result-item">
+          <div class="result-heading">Area:</div>
+          <div id="result-area" class="result-value">-</div>
+        </div>
+        
+        <div class="result-item">
+          <div class="result-heading">Perimeter Length:</div>
+          <div id="result-length" class="result-value">-</div>
+        </div>
+        
+        <div class="result-item">
+          <div class="result-heading">AI Caption:</div>
+          <div id="result-caption" class="result-value">-</div>
+        </div>
+        
+        <div class="result-item">
+          <div class="result-heading">Absolute Annual Heat Demand (MWh/a):</div>
+          <div id="result-prediction" class="result-value">-</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+       "esri/widgets/Search",
+      "esri/widgets/Sketch",
+      "esri/layers/GraphicsLayer",
+      "esri/geometry/geometryEngine"
+    ], function(Map, MapView, Search, Sketch, GraphicsLayer, geometryEngine) {
+      const graphicsLayer = new GraphicsLayer();
+
+      const map = new Map({
+        basemap: "satellite",
+        layers: [graphicsLayer]
+      });
+      
+
+      const view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [13.379, 52.563],
+        zoom: 18
+      });
+
+      const searchWidget = new Search({
+        view: view
+        });
+        view.ui.add(searchWidget, {
+        position: "top-right"
+        });
+
+      const sketch = new Sketch({
+        view: view,
+        layer: graphicsLayer,
+        creationMode: "single"
+      });
+
+      view.ui.add(sketch, "top-right");
+
+      sketch.on("create", async (event) => {
+        if (event.state === "complete" && event.graphic.geometry.type === "polygon") {
+          const polygon = event.graphic.geometry;
+
+          await view.goTo({
+            target: polygon.extent.expand(1)
+          });
+
+          const screenshot = await view.takeScreenshot();
+
+          const screenCoords = polygon.rings[0].map(coord =>
+            view.toScreen({ x: coord[0], y: coord[1], spatialReference: polygon.spatialReference })
+          );
+
+          const canvas = document.getElementById("outputCanvas");
+          canvas.width = screenshot.data.width;
+          canvas.height = screenshot.data.height;
+          const ctx = canvas.getContext("2d");
+
+          const img = new Image();
+          img.src = screenshot.dataUrl;
+
+          img.onload = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+
+            ctx.beginPath();
+            screenCoords.forEach((pt, index) => {
+              if (index === 0) ctx.moveTo(pt.x, pt.y);
+              else ctx.lineTo(pt.x, pt.y);
+            });
+            ctx.closePath();
+            ctx.clip();
+
+            ctx.drawImage(img, 0, 0);
+            ctx.restore();
+
+            // === Compute metadata ===
+            const coords = polygon.rings;
+            const length = geometryEngine.geodesicLength(polygon, "meters");
+            const area = geometryEngine.geodesicArea(polygon, "square-meters");
+            
+            // Update sidebar with calculated values
+            document.getElementById("result-area").textContent = area.toFixed(2) + " sq m";
+            document.getElementById("result-length").textContent = length.toFixed(2) + " m";
+            
+            // Show the loading indicator
+            document.getElementById("loading").style.display = "block";
+            
+            // === Convert canvas to blob and send all data ===
+            canvas.toBlob((blob) => {
+              const formData = new FormData();
+              formData.append("image", blob, "clipped_image.png");
+              formData.append("coordinates", JSON.stringify(coords));
+              formData.append("length_meters", length.toFixed(2));
+              formData.append("area_sq_meters", area.toFixed(2));
+
+              fetch("/upload-image", {
+                method: "POST",
+                body: formData,
+              })
+                .then((res) => res.json())
+                .then((data) => {
+                  console.log("✅ Image and metadata saved:", data);
+                  
+                  // Update the sidebar with response data
+                  document.getElementById("loading").style.display = "none";
+                  
+                  // Display caption
+                  if (data.caption) {
+                    document.getElementById("result-caption").textContent = data.caption;
+                  }
+                  // Display prediction
+                  if (data.prediction !== undefined && data.prediction !== null) {
+                    document.getElementById("result-prediction").textContent = data.prediction.toFixed(2);
+                  }
+                })
+                .catch((err) => {
+                  document.getElementById("loading").style.display = "none";
+                  console.error("❌ Upload failed:", err);
+                  alert("Error: " + err.message);
+                });
+            }, "image/png");
+          };
+        }
+      });
+    });
+  </script>
+</body>
+
+</html>
