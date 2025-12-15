@@ -88,15 +88,6 @@ This script:
 - Evaluates models using cross-validation
 - Saves the best performing model to `models/best_gpt4o_regressor.joblib`
 
-### 6. Run Model Ablations and CNN
-
-Compare different model architectures and feature sets:
-
-```bash
-python 06_run_ablations.py
-python 06_run_CNN.py
-```
-
 This script:
 - Tests different combinations of features
 - Compares text embeddings vs. CNN features
