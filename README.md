@@ -94,7 +94,7 @@ This script:
 - Evaluates the contribution of geometric features
 - Generates comparison charts and metrics
 
-### 7. Interactive Demo Application
+### 6. Interactive Demo Application
 
 Once the models are trained, run the demo application:
 
